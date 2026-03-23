@@ -1,0 +1,82 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  user
+  restaurant
+  admin
+}
+
+enum ReservationStatus {
+  pending
+  confirmed
+  rejected
+}
+
+model User {
+  id           Int           @id @default(autoincrement())
+  name         String
+  email        String        @unique
+  password     String
+  role         Role          @default(user)
+  phone        String?
+  createdAt    DateTime      @default(now()) @map("created_at")
+  reservations Reservation[]
+  restaurants  Restaurant[]
+
+  @@map("users")
+}
+
+model Restaurant {
+  id           Int           @id @default(autoincrement())
+  name         String
+  description  String?       @db.Text
+  location     String
+  imageUrl     String?       @map("image_url")
+  openingTime  String        @map("opening_time")
+  closingTime  String        @map("closing_time")
+  isApproved   Boolean       @default(false) @map("is_approved")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  ownerId      Int           @map("owner_id")
+  owner        User          @relation(fields: [ownerId], references: [id])
+  reservations Reservation[]
+  tables       Table[]
+
+  @@map("restaurants")
+}
+
+model Table {
+  id           Int           @id @default(autoincrement())
+  tableNumber  String        @map("table_number")
+  capacity     Int
+  isAvailable  Boolean       @default(true) @map("is_available")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  restaurantId Int           @map("restaurant_id")
+  restaurant   Restaurant    @relation(fields: [restaurantId], references: [id])
+  reservations Reservation[]
+
+  @@map("tables")
+}
+
+model Reservation {
+  id           Int               @id @default(autoincrement())
+  date         String
+  time         String
+  guests       Int
+  status       ReservationStatus @default(pending)
+  createdAt    DateTime          @default(now()) @map("created_at")
+  userId       Int               @map("user_id")
+  user         User              @relation(fields: [userId], references: [id])
+  restaurantId Int               @map("restaurant_id")
+  restaurant   Restaurant        @relation(fields: [restaurantId], references: [id])
+  tableId      Int?              @map("table_id")
+  table        Table?            @relation(fields: [tableId], references: [id])
+
+  @@map("reservations")
+}
