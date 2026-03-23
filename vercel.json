@@ -5,7 +5,7 @@
       "src": "server.js",
       "use": "@vercel/node",
       "config": {
-        "buildCommand": "npm install && npx prisma generate"
+        "buildCommand": "npm install && ./node_modules/.bin/prisma generate"
       }
     }
   ],
