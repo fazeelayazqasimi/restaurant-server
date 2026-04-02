@@ -1,10 +1,11 @@
 const prisma = require('../config/prisma')
 const bcrypt = require('bcryptjs')
 
-// ─── GET ALL USERS ────────────────────────────────────────
+// ─── GET ALL USERS (role: user only) ─────────────────────
 const getAllUsers = async (req, res) => {
   try {
     const users = await prisma.user.findMany({
+      where: { role: 'user' },
       select: {
         id: true,
         name: true,
@@ -13,10 +14,7 @@ const getAllUsers = async (req, res) => {
         phone: true,
         createdAt: true,
         _count: {
-          select: {
-            reservations: true,
-            restaurants: true
-          }
+          select: { reservations: true }
         }
       },
       orderBy: { createdAt: 'desc' }
@@ -24,6 +22,39 @@ const getAllUsers = async (req, res) => {
     res.status(200).json({ users })
   } catch (error) {
     console.error('Get all users error:', error)
+    res.status(500).json({ message: 'Server error.' })
+  }
+}
+
+// ─── GET ALL RESTAURANT OWNERS (role: restaurant) ────────
+const getAllRestaurantOwners = async (req, res) => {
+  try {
+    const owners = await prisma.user.findMany({
+      where: { role: 'restaurant' },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        phone: true,
+        createdAt: true,
+        _count: {
+          select: { restaurants: true }
+        },
+        restaurants: {
+          select: {
+            id: true,
+            name: true,
+            isApproved: true,
+            location: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    })
+    res.status(200).json({ owners })
+  } catch (error) {
+    console.error('Get all restaurant owners error:', error)
     res.status(500).json({ message: 'Server error.' })
   }
 }
@@ -59,6 +90,9 @@ const deleteUser = async (req, res) => {
       await prisma.reservation.deleteMany({
         where: { restaurantId: restaurant.id }
       })
+      await prisma.table.deleteMany({
+        where: { restaurantId: restaurant.id }
+      })
     }
 
     await prisma.restaurant.deleteMany({
@@ -79,13 +113,20 @@ const deleteUser = async (req, res) => {
 // ─── GET ALL RESTAURANTS ──────────────────────────────────
 const getAllRestaurants = async (req, res) => {
   try {
+    const { approved } = req.query
+
+    const where = {}
+    if (approved === 'true') where.isApproved = true
+    if (approved === 'false') where.isApproved = false
+
     const restaurants = await prisma.restaurant.findMany({
+      where,
       include: {
         owner: {
           select: { id: true, name: true, email: true, phone: true }
         },
         _count: {
-          select: { reservations: true }
+          select: { reservations: true, tables: true }
         }
       },
       orderBy: { createdAt: 'desc' }
@@ -114,6 +155,10 @@ const deleteRestaurant = async (req, res) => {
       where: { restaurantId: parseInt(id) }
     })
 
+    await prisma.table.deleteMany({
+      where: { restaurantId: parseInt(id) }
+    })
+
     await prisma.restaurant.delete({
       where: { id: parseInt(id) }
     })
@@ -129,18 +174,22 @@ const deleteRestaurant = async (req, res) => {
 const createRestaurant = async (req, res) => {
   try {
     const {
-      name, description, location,
+      name, description, location, address,
       openingTime, closingTime,
       ownerName, ownerEmail, ownerPassword, ownerPhone
     } = req.body
 
-    if (!name || !location || !openingTime || !closingTime || !ownerEmail || !ownerPassword) {
-      return res.status(400).json({ message: 'All required fields must be filled.' })
+    if (!name || !location || !openingTime || !closingTime || !ownerEmail || !ownerPassword || !ownerPhone) {
+      return res.status(400).json({ message: 'All required fields must be filled including owner phone.' })
     }
 
-    // Check if owner email already exists
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(ownerEmail)) {
+      return res.status(400).json({ message: 'Please enter a valid owner email.' })
+    }
+
     const existing = await prisma.user.findUnique({
-      where: { email: ownerEmail }
+      where: { email: ownerEmail.toLowerCase() }
     })
 
     let owner
@@ -152,9 +201,9 @@ const createRestaurant = async (req, res) => {
       owner = await prisma.user.create({
         data: {
           name: ownerName || 'Restaurant Owner',
-          email: ownerEmail,
+          email: ownerEmail.toLowerCase().trim(),
           password: hashedPassword,
-          phone: ownerPhone || null,
+          phone: ownerPhone.trim(),
           role: 'restaurant'
         }
       })
@@ -165,6 +214,7 @@ const createRestaurant = async (req, res) => {
         name,
         description: description || null,
         location,
+        address: address || null,
         openingTime,
         closingTime,
         ownerId: owner.id,
@@ -188,10 +238,40 @@ const createRestaurant = async (req, res) => {
   }
 }
 
+// ─── ADMIN DASHBOARD STATS ────────────────────────────────
+const getDashboardStats = async (req, res) => {
+  try {
+    const [totalUsers, totalOwners, totalRestaurants, pendingRestaurants, totalReservations, pendingReservations] = await Promise.all([
+      prisma.user.count({ where: { role: 'user' } }),
+      prisma.user.count({ where: { role: 'restaurant' } }),
+      prisma.restaurant.count({ where: { isApproved: true } }),
+      prisma.restaurant.count({ where: { isApproved: false } }),
+      prisma.reservation.count(),
+      prisma.reservation.count({ where: { status: 'pending' } })
+    ])
+
+    res.status(200).json({
+      stats: {
+        totalUsers,
+        totalOwners,
+        totalRestaurants,
+        pendingRestaurants,
+        totalReservations,
+        pendingReservations
+      }
+    })
+  } catch (error) {
+    console.error('Dashboard stats error:', error)
+    res.status(500).json({ message: 'Server error.' })
+  }
+}
+
 module.exports = {
   getAllUsers,
+  getAllRestaurantOwners,
   deleteUser,
   getAllRestaurants,
   deleteRestaurant,
-  createRestaurant
+  createRestaurant,
+  getDashboardStats
 }

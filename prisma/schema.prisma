@@ -17,7 +17,16 @@ enum Role {
 enum ReservationStatus {
   pending
   confirmed
+  cancelled
+  completed
+  no_show
   rejected
+}
+
+enum TableStatus {
+  available
+  reserved
+  occupied
 }
 
 model User {
@@ -39,6 +48,7 @@ model Restaurant {
   name         String
   description  String?       @db.Text
   location     String
+  address      String?
   imageUrl     String?       @map("image_url")
   openingTime  String        @map("opening_time")
   closingTime  String        @map("closing_time")
@@ -48,6 +58,7 @@ model Restaurant {
   owner        User          @relation(fields: [ownerId], references: [id])
   reservations Reservation[]
   tables       Table[]
+  timeSlots    TimeSlot[]
 
   @@map("restaurants")
 }
@@ -56,6 +67,7 @@ model Table {
   id           Int           @id @default(autoincrement())
   tableNumber  String        @map("table_number")
   capacity     Int
+  status       TableStatus   @default(available)
   isAvailable  Boolean       @default(true) @map("is_available")
   createdAt    DateTime      @default(now()) @map("created_at")
   restaurantId Int           @map("restaurant_id")
@@ -65,12 +77,26 @@ model Table {
   @@map("tables")
 }
 
+model TimeSlot {
+  id           Int        @id @default(autoincrement())
+  restaurantId Int        @map("restaurant_id")
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  slotTime     String     @map("slot_time")
+  capacity     Int        @default(10)
+  isActive     Boolean    @default(true) @map("is_active")
+  createdAt    DateTime   @default(now()) @map("created_at")
+
+  @@map("time_slots")
+}
+
 model Reservation {
   id           Int               @id @default(autoincrement())
   date         String
   time         String
   guests       Int
   status       ReservationStatus @default(pending)
+  notes        String?           @db.Text
+  isWalkIn     Boolean           @default(false) @map("is_walk_in")
   createdAt    DateTime          @default(now()) @map("created_at")
   userId       Int               @map("user_id")
   user         User              @relation(fields: [userId], references: [id])
