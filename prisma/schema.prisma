@@ -1,6 +1,5 @@
 generator client {
-  provider      = "prisma-client-js"
-  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+  provider = "prisma-client-js"
 }
 
 datasource db {
@@ -20,7 +19,6 @@ enum ReservationStatus {
   cancelled
   completed
   no_show
-  rejected
 }
 
 enum TableStatus {
@@ -30,80 +28,79 @@ enum TableStatus {
 }
 
 model User {
-  id           Int           @id @default(autoincrement())
-  name         String
-  email        String        @unique
-  password     String
-  role         Role          @default(user)
-  phone        String?
-  createdAt    DateTime      @default(now()) @map("created_at")
+  id         Int      @id @default(autoincrement())
+  name       String
+  email      String   @unique
+  password   String
+  phone      String
+  role       Role     @default(user)
+  isApproved Boolean  @default(false)
+  isVerified Boolean  @default(false)
+  otp        String?
+  otpExpiry  DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  
+  restaurant   Restaurant?
   reservations Reservation[]
-  restaurants  Restaurant[]
-
-  @@map("users")
 }
 
 model Restaurant {
-  id           Int           @id @default(autoincrement())
-  name         String
-  description  String?       @db.Text
-  location     String
-  address      String?
-  imageUrl     String?       @map("image_url")
-  openingTime  String        @map("opening_time")
-  closingTime  String        @map("closing_time")
-  isApproved   Boolean       @default(false) @map("is_approved")
-  createdAt    DateTime      @default(now()) @map("created_at")
-  ownerId      Int           @map("owner_id")
-  owner        User          @relation(fields: [ownerId], references: [id])
-  reservations Reservation[]
+  id          Int      @id @default(autoincrement())
+  name        String
+  location    String
+  description String?   @db.Text
+  logo        String?
+  images      String?   // JSON array
+  openingTime String
+  closingTime String
+  isApproved  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  ownerId      Int
+  owner        User           @relation(fields: [ownerId], references: [id])
   tables       Table[]
   timeSlots    TimeSlot[]
-
-  @@map("restaurants")
+  reservations Reservation[]
 }
 
 model Table {
-  id           Int           @id @default(autoincrement())
-  tableNumber  String        @map("table_number")
+  id           Int        @id @default(autoincrement())
+  tableNumber  String
   capacity     Int
-  status       TableStatus   @default(available)
-  isAvailable  Boolean       @default(true) @map("is_available")
-  createdAt    DateTime      @default(now()) @map("created_at")
-  restaurantId Int           @map("restaurant_id")
-  restaurant   Restaurant    @relation(fields: [restaurantId], references: [id])
+  status       TableStatus @default(available)
+  restaurantId Int
+  restaurant   Restaurant  @relation(fields: [restaurantId], references: [id])
   reservations Reservation[]
-
-  @@map("tables")
 }
 
 model TimeSlot {
   id           Int        @id @default(autoincrement())
-  restaurantId Int        @map("restaurant_id")
+  restaurantId Int
   restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
-  slotTime     String     @map("slot_time")
+  time         String
   capacity     Int        @default(10)
-  isActive     Boolean    @default(true) @map("is_active")
-  createdAt    DateTime   @default(now()) @map("created_at")
-
-  @@map("time_slots")
+  isActive     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
 }
 
 model Reservation {
-  id           Int               @id @default(autoincrement())
-  date         String
-  time         String
-  guests       Int
-  status       ReservationStatus @default(pending)
-  notes        String?           @db.Text
-  isWalkIn     Boolean           @default(false) @map("is_walk_in")
-  createdAt    DateTime          @default(now()) @map("created_at")
-  userId       Int               @map("user_id")
-  user         User              @relation(fields: [userId], references: [id])
-  restaurantId Int               @map("restaurant_id")
-  restaurant   Restaurant        @relation(fields: [restaurantId], references: [id])
-  tableId      Int?              @map("table_id")
-  table        Table?            @relation(fields: [tableId], references: [id])
-
-  @@map("reservations")
+  id            Int              @id @default(autoincrement())
+  date          String
+  time          String
+  guests        Int
+  status        ReservationStatus @default(pending)
+  isWalkIn      Boolean          @default(false)
+  customerName  String?
+  customerPhone String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  
+  userId       Int
+  user         User         @relation(fields: [userId], references: [id])
+  restaurantId Int
+  restaurant   Restaurant   @relation(fields: [restaurantId], references: [id])
+  tableId      Int?
+  table        Table?       @relation(fields: [tableId], references: [id])
 }

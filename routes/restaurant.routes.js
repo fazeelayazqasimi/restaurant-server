@@ -1,34 +1,14 @@
 const express = require('express')
 const router = express.Router()
-const {
-  getAllRestaurants,
-  getRestaurantById,
-  createRestaurant,
-  updateRestaurant,
-  approveRestaurant,
-  getMyRestaurants
-} = require('../controllers/restaurant.controller')
+const { getRestaurants, getRestaurantById, createRestaurant, uploadImages, approveRestaurant, getPendingRestaurants } = require('../controllers/restaurant.controller')
 const { protect, restrictTo } = require('../middleware/auth')
+const upload = require('../middleware/upload')
 
-// ─── Public Routes ────────────────────────────────────────
-// GET /api/restaurants
-router.get('/', getAllRestaurants)
-
-// GET /api/restaurants/:id
+router.get('/', getRestaurants)
+router.get('/pending', protect, restrictTo('admin'), getPendingRestaurants)
 router.get('/:id', getRestaurantById)
-
-// ─── Protected Routes ─────────────────────────────────────
-// POST /api/restaurants (Restaurant owner only)
-router.post('/', protect, restrictTo('restaurant', 'admin'), createRestaurant)
-
-// PUT /api/restaurants/:id (Owner or Admin)
-router.put('/:id', protect, restrictTo('restaurant', 'admin'), updateRestaurant)
-
-// GET /api/restaurants/my/list (Owner only)
-router.get('/my/list', protect, restrictTo('restaurant', 'admin'), getMyRestaurants)
-
-// ─── Admin Routes ─────────────────────────────────────────
-// PUT /api/restaurants/:id/approve (Admin only)
+router.post('/', protect, restrictTo('admin'), upload.single('logo'), createRestaurant)
+router.post('/:id/images', protect, upload.array('images', 10), uploadImages)
 router.put('/:id/approve', protect, restrictTo('admin'), approveRestaurant)
 
 module.exports = router

@@ -1,19 +1,30 @@
 const prisma = require('../config/prisma')
+const fs = require('fs')
+const path = require('path')
 
-// ─── GET ALL APPROVED RESTAURANTS ─────────────────────────
-const getAllRestaurants = async (req, res) => {
+// ─── GET ALL RESTAURANTS (PUBLIC) ─────────────────────────
+const getRestaurants = async (req, res) => {
   try {
     const restaurants = await prisma.restaurant.findMany({
       where: { isApproved: true },
       include: {
-        owner: {
-          select: { id: true, name: true, email: true, phone: true }
-        }
+        owner: { select: { name: true, email: true } },
+        tables: true,
+        timeSlots: true,
+        _count: { select: { reservations: true } }
       },
       orderBy: { createdAt: 'desc' }
     })
-
-    res.status(200).json({ restaurants })
+    
+    // Add image URLs
+    const baseUrl = `${req.protocol}://${req.get('host')}`
+    const restaurantsWithImages = restaurants.map(r => ({
+      ...r,
+      logo: r.logo ? `${baseUrl}/${r.logo}` : null,
+      images: r.images ? JSON.parse(r.images).map(img => `${baseUrl}/${img}`) : []
+    }))
+    
+    res.status(200).json({ restaurants: restaurantsWithImages })
   } catch (error) {
     console.error('Get restaurants error:', error)
     res.status(500).json({ message: 'Server error.' })
@@ -24,141 +35,160 @@ const getAllRestaurants = async (req, res) => {
 const getRestaurantById = async (req, res) => {
   try {
     const { id } = req.params
-
+    
     const restaurant = await prisma.restaurant.findUnique({
       where: { id: parseInt(id) },
       include: {
-        owner: {
-          select: { id: true, name: true, email: true, phone: true }
-        }
+        owner: { select: { name: true, email: true, phone: true } },
+        tables: true,
+        timeSlots: { where: { isActive: true }, orderBy: { time: 'asc' } },
+        reservations: { take: 10, orderBy: { createdAt: 'desc' } }
       }
     })
-
+    
     if (!restaurant) {
       return res.status(404).json({ message: 'Restaurant not found.' })
     }
-
-    res.status(200).json({ restaurant })
+    
+    const baseUrl = `${req.protocol}://${req.get('host')}`
+    const restaurantWithImages = {
+      ...restaurant,
+      logo: restaurant.logo ? `${baseUrl}/${restaurant.logo}` : null,
+      images: restaurant.images ? JSON.parse(restaurant.images).map(img => `${baseUrl}/${img}`) : []
+    }
+    
+    res.status(200).json({ restaurant: restaurantWithImages })
   } catch (error) {
     console.error('Get restaurant error:', error)
     res.status(500).json({ message: 'Server error.' })
   }
 }
 
-// ─── CREATE RESTAURANT (Restaurant Owner only) ────────────
+// ─── CREATE RESTAURANT (ADMIN) ────────────────────────────
 const createRestaurant = async (req, res) => {
   try {
-    const { name, description, location, openingTime, closingTime } = req.body
-
+    const { name, location, description, openingTime, closingTime, ownerEmail } = req.body
+    
     if (!name || !location || !openingTime || !closingTime) {
-      return res.status(400).json({ message: 'Name, location, opening and closing time are required.' })
+      return res.status(400).json({ message: 'Required fields missing.' })
     }
-
+    
+    // Find or create owner
+    let owner = await prisma.user.findUnique({ where: { email: ownerEmail } })
+    
+    if (!owner) {
+      const tempPassword = Math.random().toString(36).slice(-8)
+      const hashedPassword = await bcrypt.hash(tempPassword, 10)
+      
+      owner = await prisma.user.create({
+        data: {
+          name: name + ' Owner',
+          email: ownerEmail,
+          password: hashedPassword,
+          phone: '',
+          role: 'restaurant',
+          isApproved: true,
+          isVerified: true
+        }
+      })
+    }
+    
+    // Handle logo upload
+    let logoPath = null
+    if (req.file) {
+      logoPath = req.file.path.replace(/\\/g, '/')
+    }
+    
     const restaurant = await prisma.restaurant.create({
       data: {
         name,
-        description: description || null,
         location,
+        description: description || '',
+        logo: logoPath,
         openingTime,
         closingTime,
-        ownerId: req.user.id,
-        isApproved: false  // Admin approve karega
+        isApproved: true,
+        ownerId: owner.id
       }
     })
-
-    res.status(201).json({
-      message: 'Restaurant created. Waiting for admin approval.',
-      restaurant
-    })
+    
+    res.status(201).json({ message: 'Restaurant created.', restaurant })
   } catch (error) {
     console.error('Create restaurant error:', error)
     res.status(500).json({ message: 'Server error.' })
   }
 }
 
-// ─── UPDATE RESTAURANT (Owner only) ──────────────────────
-const updateRestaurant = async (req, res) => {
+// ─── UPLOAD RESTAURANT IMAGES ─────────────────────────────
+const uploadImages = async (req, res) => {
   try {
     const { id } = req.params
-    const { name, description, location, openingTime, closingTime } = req.body
-
-    // Check restaurant exists
-    const restaurant = await prisma.restaurant.findUnique({
-      where: { id: parseInt(id) }
-    })
-
+    
+    const restaurant = await prisma.restaurant.findUnique({ where: { id: parseInt(id) } })
     if (!restaurant) {
       return res.status(404).json({ message: 'Restaurant not found.' })
     }
-
-    // Check ownership
-    if (restaurant.ownerId !== req.user.id && req.user.role !== 'admin') {
-      return res.status(403).json({ message: 'Not authorized to update this restaurant.' })
+    
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ message: 'No images uploaded.' })
     }
-
-    const updated = await prisma.restaurant.update({
+    
+    const imagePaths = req.files.map(file => file.path.replace(/\\/g, '/'))
+    let existingImages = restaurant.images ? JSON.parse(restaurant.images) : []
+    const allImages = [...existingImages, ...imagePaths]
+    
+    await prisma.restaurant.update({
       where: { id: parseInt(id) },
-      data: {
-        name: name || restaurant.name,
-        description: description || restaurant.description,
-        location: location || restaurant.location,
-        openingTime: openingTime || restaurant.openingTime,
-        closingTime: closingTime || restaurant.closingTime
-      }
+      data: { images: JSON.stringify(allImages) }
     })
-
-    res.status(200).json({ message: 'Restaurant updated.', restaurant: updated })
+    
+    res.status(200).json({ message: 'Images uploaded.', images: imagePaths })
   } catch (error) {
-    console.error('Update restaurant error:', error)
+    console.error('Upload images error:', error)
     res.status(500).json({ message: 'Server error.' })
   }
 }
 
-// ─── APPROVE RESTAURANT (Admin only) ─────────────────────
+// ─── APPROVE RESTAURANT (ADMIN) ───────────────────────────
 const approveRestaurant = async (req, res) => {
   try {
     const { id } = req.params
-
-    const restaurant = await prisma.restaurant.findUnique({
-      where: { id: parseInt(id) }
-    })
-
+    
+    const restaurant = await prisma.restaurant.findUnique({ where: { id: parseInt(id) } })
     if (!restaurant) {
       return res.status(404).json({ message: 'Restaurant not found.' })
     }
-
-    const updated = await prisma.restaurant.update({
+    
+    await prisma.restaurant.update({
       where: { id: parseInt(id) },
       data: { isApproved: true }
     })
-
-    res.status(200).json({ message: 'Restaurant approved.', restaurant: updated })
+    
+    await prisma.user.update({
+      where: { id: restaurant.ownerId },
+      data: { isApproved: true }
+    })
+    
+    res.status(200).json({ message: 'Restaurant approved.' })
   } catch (error) {
     console.error('Approve restaurant error:', error)
     res.status(500).json({ message: 'Server error.' })
   }
 }
 
-// ─── GET MY RESTAURANTS (Owner only) ─────────────────────
-const getMyRestaurants = async (req, res) => {
+// ─── GET PENDING RESTAURANTS (ADMIN) ──────────────────────
+const getPendingRestaurants = async (req, res) => {
   try {
     const restaurants = await prisma.restaurant.findMany({
-      where: { ownerId: req.user.id },
-      orderBy: { createdAt: 'desc' }
+      where: { isApproved: false },
+      include: { owner: { select: { name: true, email: true, phone: true } } }
     })
-
-    res.status(200).json({ restaurants })
+    
+    res.status(200).json({ pendingRestaurants: restaurants })
   } catch (error) {
-    console.error('Get my restaurants error:', error)
+    console.error('Get pending error:', error)
     res.status(500).json({ message: 'Server error.' })
   }
 }
 
-module.exports = {
-  getAllRestaurants,
-  getRestaurantById,
-  createRestaurant,
-  updateRestaurant,
-  approveRestaurant,
-  getMyRestaurants
-}
+module.exports = { getRestaurants, getRestaurantById, createRestaurant, uploadImages, approveRestaurant, getPendingRestaurants }

@@ -1,18 +1,12 @@
 const express = require('express')
 const router = express.Router()
-const { register, login, getProfile, updateProfile } = require('../controllers/auth.controller')
+const { sendOtp, verifyOtp, register, login, getProfile } = require('../controllers/auth.controller')
 const { protect } = require('../middleware/auth')
 
-// POST /api/auth/register
+router.post('/send-otp', sendOtp)
+router.post('/verify-otp', verifyOtp)
 router.post('/register', register)
-
-// POST /api/auth/login
 router.post('/login', login)
-
-// GET /api/auth/profile
 router.get('/profile', protect, getProfile)
-
-// PUT /api/auth/profile
-router.put('/profile', protect, updateProfile)
 
 module.exports = router
