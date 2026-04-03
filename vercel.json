@@ -8,7 +8,7 @@
         "includeFiles": [
           "prisma/**",
           "routes/**",
-          "controllers/**", 
+          "controllers/**",
           "middleware/**",
           "utils/**",
           "config/**"

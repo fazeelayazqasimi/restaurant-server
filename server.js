@@ -8,14 +8,6 @@ dotenv.config()
 
 const app = express()
 
-// ─── Create uploads directory if not exists ───────────────
-const uploadDirs = ['./uploads', './uploads/restaurants', './uploads/logos']
-uploadDirs.forEach(dir => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true })
-  }
-})
-
 // ─── Middleware ───────────────────────────────────────────
 app.use(cors({
   origin: '*',
@@ -25,8 +17,19 @@ app.use(cors({
 app.use(express.json())
 app.use(express.urlencoded({ extended: true }))
 
-// ─── Serve static files (uploaded images) ─────────────────
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')))
+// ─── Create uploads directory ONLY for local development ───
+if (process.env.NODE_ENV !== 'production') {
+  const uploadDirs = ['./uploads', './uploads/restaurants', './uploads/logos']
+  uploadDirs.forEach(dir => {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true })
+    }
+  })
+  app.use('/uploads', express.static(path.join(__dirname, 'uploads')))
+}
+
+// ─── For Vercel, use memory storage or cloudinary ─────────
+// In production, images should be stored on Cloudinary or similar
 
 // ─── Ngrok warning bypass ─────────────────────────────────
 app.use((req, res, next) => {
@@ -37,6 +40,10 @@ app.use((req, res, next) => {
 // ─── Routes ───────────────────────────────────────────────
 app.get('/', (req, res) => {
   res.json({ message: 'Restaurant Reservation API is running.' })
+})
+
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'OK', message: 'Server is running' })
 })
 
 app.use('/api/auth', require('./routes/auth.routes'))
@@ -52,7 +59,7 @@ app.use((req, res) => {
 
 // ─── Error handler ────────────────────────────────────────
 app.use((err, req, res, next) => {
-  console.error(err.stack)
+  console.error('Error:', err.message)
   res.status(500).json({ message: err.message || 'Internal server error.' })
 })
 
@@ -64,6 +71,6 @@ if (require.main === module) {
   const PORT = process.env.PORT || 5000
   app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`)
-    console.log(`📁 Uploads directory: ${path.join(__dirname, 'uploads')}`)
+    console.log(`📁 Environment: ${process.env.NODE_ENV || 'development'}`)
   })
 }
