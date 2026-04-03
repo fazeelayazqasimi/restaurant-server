@@ -5,7 +5,14 @@
       "src": "server.js",
       "use": "@vercel/node",
       "config": {
-        "buildCommand": "npm install && ./node_modules/.bin/prisma generate"
+        "includeFiles": [
+          "prisma/**",
+          "routes/**",
+          "controllers/**", 
+          "middleware/**",
+          "utils/**",
+          "config/**"
+        ]
       }
     }
   ],
