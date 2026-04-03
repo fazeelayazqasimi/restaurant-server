@@ -2,6 +2,9 @@ const multer = require('multer')
 const path = require('path')
 const fs = require('fs')
 
+// Use /tmp on Vercel (only writable directory), local ./uploads otherwise
+const BASE_DIR = process.env.VERCEL ? '/tmp/uploads' : './uploads'
+
 // Ensure upload directories exist
 const ensureDir = (dir) => {
   if (!fs.existsSync(dir)) {
@@ -9,18 +12,18 @@ const ensureDir = (dir) => {
   }
 }
 
-ensureDir('./uploads')
-ensureDir('./uploads/restaurants')
-ensureDir('./uploads/logos')
+ensureDir(BASE_DIR)
+ensureDir(`${BASE_DIR}/restaurants`)
+ensureDir(`${BASE_DIR}/logos`)
 
 // Storage configuration
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const type = req.query.type || 'restaurants'
     if (type === 'logo') {
-      cb(null, './uploads/logos')
+      cb(null, `${BASE_DIR}/logos`)
     } else {
-      cb(null, './uploads/restaurants')
+      cb(null, `${BASE_DIR}/restaurants`)
     }
   },
   filename: (req, file, cb) => {
@@ -35,7 +38,7 @@ const fileFilter = (req, file, cb) => {
   const allowedTypes = /jpeg|jpg|png|gif|webp/
   const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase())
   const mimetype = allowedTypes.test(file.mimetype)
-  
+
   if (mimetype && extname) {
     cb(null, true)
   } else {
