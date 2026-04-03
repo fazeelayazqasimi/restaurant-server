@@ -41,7 +41,7 @@ model User {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   
-  restaurant   Restaurant?
+  restaurants  Restaurant[]   // One user can have many restaurants
   reservations Reservation[]
 }
 
@@ -51,7 +51,7 @@ model Restaurant {
   location    String
   description String?   @db.Text
   logo        String?
-  images      String?   // JSON array
+  images      String?   // JSON string of image paths
   openingTime String
   closingTime String
   isApproved  Boolean  @default(false)
