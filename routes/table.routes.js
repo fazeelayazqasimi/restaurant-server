@@ -3,25 +3,27 @@ const router = express.Router()
 const {
   addTable,
   getTablesByRestaurant,
+  updateTableStatus,
   updateTable,
   deleteTable,
-  getAvailableTables
+  getAvailableTables,
+  addTimeSlot,
+  getTimeSlotsByRestaurant,
+  deleteTimeSlot
 } = require('../controllers/table.controller')
 const { protect, restrictTo } = require('../middleware/auth')
 
-// GET /api/tables/restaurant/:restaurantId (Public)
+// Table routes
 router.get('/restaurant/:restaurantId', getTablesByRestaurant)
-
-// GET /api/tables/available/:restaurantId?date=&time= (User)
-router.get('/available/:restaurantId', protect, getAvailableTables)
-
-// POST /api/tables (Owner/Admin)
+router.get('/available/:restaurantId', getAvailableTables)
 router.post('/', protect, restrictTo('restaurant', 'admin'), addTable)
-
-// PUT /api/tables/:id (Owner/Admin)
+router.put('/:id/status', protect, restrictTo('restaurant', 'admin'), updateTableStatus)
 router.put('/:id', protect, restrictTo('restaurant', 'admin'), updateTable)
-
-// DELETE /api/tables/:id (Owner/Admin)
 router.delete('/:id', protect, restrictTo('restaurant', 'admin'), deleteTable)
+
+// Time slot routes
+router.get('/timeslots/restaurant/:restaurantId', getTimeSlotsByRestaurant)
+router.post('/timeslots', protect, restrictTo('restaurant', 'admin'), addTimeSlot)
+router.delete('/timeslots/:id', protect, restrictTo('restaurant', 'admin'), deleteTimeSlot)
 
 module.exports = router

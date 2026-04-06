@@ -28,20 +28,20 @@ enum TableStatus {
 }
 
 model User {
-  id         Int      @id @default(autoincrement())
+  id         Int       @id @default(autoincrement())
   name       String
-  email      String   @unique
+  email      String    @unique
   password   String
   phone      String
-  role       Role     @default(user)
-  isApproved Boolean  @default(false)
-  isVerified Boolean  @default(false)
+  role       Role      @default(user)
+  isApproved Boolean   @default(false)
+  isVerified Boolean   @default(false)
   otp        String?
   otpExpiry  DateTime?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  
-  restaurants  Restaurant[]   // One user can have many restaurants
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  restaurants  Restaurant[]
   reservations Reservation[]
 }
 
@@ -49,24 +49,24 @@ model Restaurant {
   id          Int      @id @default(autoincrement())
   name        String
   location    String
-  description String?   @db.Text
+  description String?  @db.Text
   logo        String?
-  images      String?   // JSON string of image paths
+  images      String?
   openingTime String
   closingTime String
   isApproved  Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  
+
   ownerId      Int
-  owner        User           @relation(fields: [ownerId], references: [id])
+  owner        User          @relation(fields: [ownerId], references: [id])
   tables       Table[]
   timeSlots    TimeSlot[]
   reservations Reservation[]
 }
 
 model Table {
-  id           Int        @id @default(autoincrement())
+  id           Int         @id @default(autoincrement())
   tableNumber  String
   capacity     Int
   status       TableStatus @default(available)
@@ -86,21 +86,22 @@ model TimeSlot {
 }
 
 model Reservation {
-  id            Int              @id @default(autoincrement())
+  id            Int               @id @default(autoincrement())
   date          String
   time          String
   guests        Int
   status        ReservationStatus @default(pending)
-  isWalkIn      Boolean          @default(false)
+  isWalkIn      Boolean           @default(false)
   customerName  String?
   customerPhone String?
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
-  
-  userId       Int
-  user         User         @relation(fields: [userId], references: [id])
+  notes         String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  userId       Int?
+  user         User?       @relation(fields: [userId], references: [id])
   restaurantId Int
-  restaurant   Restaurant   @relation(fields: [restaurantId], references: [id])
+  restaurant   Restaurant  @relation(fields: [restaurantId], references: [id])
   tableId      Int?
-  table        Table?       @relation(fields: [tableId], references: [id])
+  table        Table?      @relation(fields: [tableId], references: [id])
 }

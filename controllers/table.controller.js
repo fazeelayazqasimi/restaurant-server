@@ -1,15 +1,14 @@
 const prisma = require('../config/prisma')
 
-// ─── ADD TABLE (Restaurant Owner) ────────────────────────
+// ─── ADD TABLE ────────────────────────────────────────────
 const addTable = async (req, res) => {
   try {
     const { restaurantId, tableNumber, capacity } = req.body
 
     if (!restaurantId || !tableNumber || !capacity) {
-      return res.status(400).json({ message: 'Restaurant, table number and capacity are required.' })
+      return res.status(400).json({ message: 'restaurantId, tableNumber and capacity are required.' })
     }
 
-    // Check ownership
     const restaurant = await prisma.restaurant.findUnique({
       where: { id: parseInt(restaurantId) }
     })
@@ -18,15 +17,23 @@ const addTable = async (req, res) => {
       return res.status(404).json({ message: 'Restaurant not found.' })
     }
 
-    if (restaurant.ownerId !== req.user.id && req.user.role !== 'admin') {
+    if (req.user.role !== 'admin' && restaurant.ownerId !== req.user.id) {
       return res.status(403).json({ message: 'Not authorized.' })
+    }
+
+    // Check duplicate table number in same restaurant
+    const existing = await prisma.table.findFirst({
+      where: { restaurantId: parseInt(restaurantId), tableNumber: tableNumber.toString() }
+    })
+    if (existing) {
+      return res.status(400).json({ message: `Table number ${tableNumber} already exists in this restaurant.` })
     }
 
     const table = await prisma.table.create({
       data: {
-        tableNumber,
+        tableNumber: tableNumber.toString(),
         capacity: parseInt(capacity),
-        isAvailable: true,
+        status: 'available',   // FIX: was isAvailable:true — now uses status enum
         restaurantId: parseInt(restaurantId)
       }
     })
@@ -46,20 +53,19 @@ const getTablesByRestaurant = async (req, res) => {
     const tables = await prisma.table.findMany({
       where: { restaurantId: parseInt(restaurantId) },
       include: {
-        _count: {
-          select: { reservations: true }
-        }
+        _count: { select: { reservations: true } }
       },
       orderBy: { tableNumber: 'asc' }
     })
 
     const total = tables.length
-    const available = tables.filter(t => t.isAvailable).length
-    const booked = total - available
+    const available = tables.filter(t => t.status === 'available').length
+    const reserved = tables.filter(t => t.status === 'reserved').length
+    const occupied = tables.filter(t => t.status === 'occupied').length
 
     res.status(200).json({
       tables,
-      summary: { total, available, booked }
+      summary: { total, available, reserved, occupied }
     })
   } catch (error) {
     console.error('Get tables error:', error)
@@ -67,11 +73,16 @@ const getTablesByRestaurant = async (req, res) => {
   }
 }
 
-// ─── UPDATE TABLE (Owner) ─────────────────────────────────
-const updateTable = async (req, res) => {
+// ─── UPDATE TABLE STATUS ──────────────────────────────────
+const updateTableStatus = async (req, res) => {
   try {
     const { id } = req.params
-    const { tableNumber, capacity, isAvailable } = req.body
+    const { status } = req.body
+
+    const allowedStatuses = ['available', 'reserved', 'occupied']
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({ message: `Invalid status. Allowed: ${allowedStatuses.join(', ')}` })
+    }
 
     const table = await prisma.table.findUnique({
       where: { id: parseInt(id) },
@@ -82,16 +93,52 @@ const updateTable = async (req, res) => {
       return res.status(404).json({ message: 'Table not found.' })
     }
 
-    if (table.restaurant.ownerId !== req.user.id && req.user.role !== 'admin') {
+    if (req.user.role !== 'admin' && table.restaurant.ownerId !== req.user.id) {
       return res.status(403).json({ message: 'Not authorized.' })
     }
 
     const updated = await prisma.table.update({
       where: { id: parseInt(id) },
+      data: { status }
+    })
+
+    res.status(200).json({ message: 'Table status updated.', table: updated })
+  } catch (error) {
+    console.error('Update table status error:', error)
+    res.status(500).json({ message: 'Server error.' })
+  }
+}
+
+// ─── UPDATE TABLE (number, capacity) ─────────────────────
+const updateTable = async (req, res) => {
+  try {
+    const { id } = req.params
+    const { tableNumber, capacity, status } = req.body
+
+    const table = await prisma.table.findUnique({
+      where: { id: parseInt(id) },
+      include: { restaurant: true }
+    })
+
+    if (!table) {
+      return res.status(404).json({ message: 'Table not found.' })
+    }
+
+    if (req.user.role !== 'admin' && table.restaurant.ownerId !== req.user.id) {
+      return res.status(403).json({ message: 'Not authorized.' })
+    }
+
+    const allowedStatuses = ['available', 'reserved', 'occupied']
+    if (status && !allowedStatuses.includes(status)) {
+      return res.status(400).json({ message: `Invalid status. Allowed: ${allowedStatuses.join(', ')}` })
+    }
+
+    const updated = await prisma.table.update({
+      where: { id: parseInt(id) },
       data: {
-        tableNumber: tableNumber || table.tableNumber,
-        capacity: capacity ? parseInt(capacity) : table.capacity,
-        isAvailable: isAvailable !== undefined ? isAvailable : table.isAvailable
+        ...(tableNumber && { tableNumber: tableNumber.toString() }),
+        ...(capacity && { capacity: parseInt(capacity) }),
+        ...(status && { status })
       }
     })
 
@@ -102,7 +149,7 @@ const updateTable = async (req, res) => {
   }
 }
 
-// ─── DELETE TABLE (Owner) ─────────────────────────────────
+// ─── DELETE TABLE ─────────────────────────────────────────
 const deleteTable = async (req, res) => {
   try {
     const { id } = req.params
@@ -116,19 +163,17 @@ const deleteTable = async (req, res) => {
       return res.status(404).json({ message: 'Table not found.' })
     }
 
-    if (table.restaurant.ownerId !== req.user.id && req.user.role !== 'admin') {
+    if (req.user.role !== 'admin' && table.restaurant.ownerId !== req.user.id) {
       return res.status(403).json({ message: 'Not authorized.' })
     }
 
-    // Remove tableId from reservations first
+    // Detach table from reservations first
     await prisma.reservation.updateMany({
       where: { tableId: parseInt(id) },
       data: { tableId: null }
     })
 
-    await prisma.table.delete({
-      where: { id: parseInt(id) }
-    })
+    await prisma.table.delete({ where: { id: parseInt(id) } })
 
     res.status(200).json({ message: 'Table deleted.' })
   } catch (error) {
@@ -137,17 +182,17 @@ const deleteTable = async (req, res) => {
   }
 }
 
-// ─── GET AVAILABLE TABLES (User booking) ─────────────────
+// ─── GET AVAILABLE TABLES (for booking) ───────────────────
 const getAvailableTables = async (req, res) => {
   try {
     const { restaurantId } = req.params
-    const { date, time } = req.query
+    const { date, time, guests } = req.query
 
     if (!date || !time) {
-      return res.status(400).json({ message: 'Date and time are required.' })
+      return res.status(400).json({ message: 'date and time are required.' })
     }
 
-    // Find tables already booked at this date/time
+    // Find table IDs already booked at this date/time
     const bookedReservations = await prisma.reservation.findMany({
       where: {
         restaurantId: parseInt(restaurantId),
@@ -161,13 +206,15 @@ const getAvailableTables = async (req, res) => {
 
     const bookedTableIds = bookedReservations.map(r => r.tableId)
 
-    // Get all available tables excluding booked ones
+    const where = {
+      restaurantId: parseInt(restaurantId),
+      status: 'available',
+      ...(bookedTableIds.length > 0 && { id: { notIn: bookedTableIds } }),
+      ...(guests && { capacity: { gte: parseInt(guests) } })
+    }
+
     const tables = await prisma.table.findMany({
-      where: {
-        restaurantId: parseInt(restaurantId),
-        isAvailable: true,
-        id: { notIn: bookedTableIds.length > 0 ? bookedTableIds : [-1] }
-      },
+      where,
       orderBy: { tableNumber: 'asc' }
     })
 
@@ -178,10 +225,103 @@ const getAvailableTables = async (req, res) => {
   }
 }
 
+// ─── ADD TIME SLOT ────────────────────────────────────────
+const addTimeSlot = async (req, res) => {
+  try {
+    const { restaurantId, time, capacity } = req.body
+
+    if (!restaurantId || !time) {
+      return res.status(400).json({ message: 'restaurantId and time are required.' })
+    }
+
+    const restaurant = await prisma.restaurant.findUnique({
+      where: { id: parseInt(restaurantId) }
+    })
+
+    if (!restaurant) {
+      return res.status(404).json({ message: 'Restaurant not found.' })
+    }
+
+    if (req.user.role !== 'admin' && restaurant.ownerId !== req.user.id) {
+      return res.status(403).json({ message: 'Not authorized.' })
+    }
+
+    // Check for duplicate time slot
+    const existing = await prisma.timeSlot.findFirst({
+      where: { restaurantId: parseInt(restaurantId), time }
+    })
+    if (existing) {
+      return res.status(400).json({ message: 'Time slot already exists.' })
+    }
+
+    const slot = await prisma.timeSlot.create({
+      data: {
+        restaurantId: parseInt(restaurantId),
+        time,
+        capacity: capacity ? parseInt(capacity) : 10,
+        isActive: true
+      }
+    })
+
+    res.status(201).json({ message: 'Time slot added.', slot })
+  } catch (error) {
+    console.error('Add time slot error:', error)
+    res.status(500).json({ message: 'Server error.' })
+  }
+}
+
+// ─── GET TIME SLOTS BY RESTAURANT ────────────────────────
+const getTimeSlotsByRestaurant = async (req, res) => {
+  try {
+    const { restaurantId } = req.params
+
+    const slots = await prisma.timeSlot.findMany({
+      where: { restaurantId: parseInt(restaurantId) },
+      orderBy: { time: 'asc' }
+    })
+
+    res.status(200).json({ timeSlots: slots })
+  } catch (error) {
+    console.error('Get time slots error:', error)
+    res.status(500).json({ message: 'Server error.' })
+  }
+}
+
+// ─── DELETE TIME SLOT ─────────────────────────────────────
+const deleteTimeSlot = async (req, res) => {
+  try {
+    const { id } = req.params
+
+    const slot = await prisma.timeSlot.findUnique({
+      where: { id: parseInt(id) },
+      include: { restaurant: true }
+    })
+
+    if (!slot) {
+      return res.status(404).json({ message: 'Time slot not found.' })
+    }
+
+    if (req.user.role !== 'admin' && slot.restaurant.ownerId !== req.user.id) {
+      return res.status(403).json({ message: 'Not authorized.' })
+    }
+
+    await prisma.timeSlot.delete({ where: { id: parseInt(id) } })
+
+    res.status(200).json({ message: 'Time slot deleted.' })
+  } catch (error) {
+    console.error('Delete time slot error:', error)
+    res.status(500).json({ message: 'Server error.' })
+  }
+}
+
 module.exports = {
   addTable,
   getTablesByRestaurant,
+  updateTableStatus,
   updateTable,
   deleteTable,
-  getAvailableTables
+  getAvailableTables,
+  addTimeSlot,
+  getTimeSlotsByRestaurant,
+  deleteTimeSlot
 }

@@ -1,6 +1,44 @@
 const prisma = require('../config/prisma')
 const bcrypt = require('bcryptjs')
 
+// ─── DASHBOARD STATS ──────────────────────────────────────
+const getDashboardStats = async (req, res) => {
+  try {
+    const [
+      totalUsers,
+      totalOwners,
+      totalRestaurants,
+      pendingRestaurants,
+      totalReservations,
+      pendingReservations,
+      confirmedReservations
+    ] = await Promise.all([
+      prisma.user.count({ where: { role: 'user' } }),
+      prisma.user.count({ where: { role: 'restaurant' } }),
+      prisma.restaurant.count({ where: { isApproved: true } }),
+      prisma.restaurant.count({ where: { isApproved: false } }),
+      prisma.reservation.count(),
+      prisma.reservation.count({ where: { status: 'pending' } }),
+      prisma.reservation.count({ where: { status: 'confirmed' } })
+    ])
+
+    res.status(200).json({
+      stats: {
+        totalUsers,
+        totalOwners,
+        totalRestaurants,
+        pendingRestaurants,
+        totalReservations,
+        pendingReservations,
+        confirmedReservations
+      }
+    })
+  } catch (error) {
+    console.error('Dashboard stats error:', error)
+    res.status(500).json({ message: 'Server error.' })
+  }
+}
+
 // ─── GET ALL USERS (role: user only) ─────────────────────
 const getAllUsers = async (req, res) => {
   try {
@@ -12,10 +50,10 @@ const getAllUsers = async (req, res) => {
         email: true,
         role: true,
         phone: true,
+        isVerified: true,
+        isApproved: true,
         createdAt: true,
-        _count: {
-          select: { reservations: true }
-        }
+        _count: { select: { reservations: true } }
       },
       orderBy: { createdAt: 'desc' }
     })
@@ -37,24 +75,19 @@ const getAllRestaurantOwners = async (req, res) => {
         email: true,
         role: true,
         phone: true,
+        isVerified: true,
+        isApproved: true,
         createdAt: true,
-        _count: {
-          select: { restaurants: true }
-        },
+        _count: { select: { restaurants: true } },
         restaurants: {
-          select: {
-            id: true,
-            name: true,
-            isApproved: true,
-            location: true
-          }
+          select: { id: true, name: true, isApproved: true, location: true }
         }
       },
       orderBy: { createdAt: 'desc' }
     })
     res.status(200).json({ owners })
   } catch (error) {
-    console.error('Get all restaurant owners error:', error)
+    console.error('Get restaurant owners error:', error)
     res.status(500).json({ message: 'Server error.' })
   }
 }
@@ -64,9 +97,7 @@ const deleteUser = async (req, res) => {
   try {
     const { id } = req.params
 
-    const user = await prisma.user.findUnique({
-      where: { id: parseInt(id) }
-    })
+    const user = await prisma.user.findUnique({ where: { id: parseInt(id) } })
 
     if (!user) {
       return res.status(404).json({ message: 'User not found.' })
@@ -76,32 +107,23 @@ const deleteUser = async (req, res) => {
       return res.status(403).json({ message: 'Cannot delete admin user.' })
     }
 
-    // Delete user reservations
-    await prisma.reservation.deleteMany({
-      where: { userId: parseInt(id) }
-    })
+    // Delete user's reservations
+    await prisma.reservation.deleteMany({ where: { userId: parseInt(id) } })
 
-    // Delete restaurants owned by user
-    const restaurants = await prisma.restaurant.findMany({
-      where: { ownerId: parseInt(id) }
-    })
+    // If restaurant owner, clean up their restaurants
+    if (user.role === 'restaurant') {
+      const restaurants = await prisma.restaurant.findMany({ where: { ownerId: parseInt(id) } })
 
-    for (const restaurant of restaurants) {
-      await prisma.reservation.deleteMany({
-        where: { restaurantId: restaurant.id }
-      })
-      await prisma.table.deleteMany({
-        where: { restaurantId: restaurant.id }
-      })
+      for (const r of restaurants) {
+        await prisma.reservation.deleteMany({ where: { restaurantId: r.id } })
+        await prisma.table.deleteMany({ where: { restaurantId: r.id } })
+        await prisma.timeSlot.deleteMany({ where: { restaurantId: r.id } })
+      }
+
+      await prisma.restaurant.deleteMany({ where: { ownerId: parseInt(id) } })
     }
 
-    await prisma.restaurant.deleteMany({
-      where: { ownerId: parseInt(id) }
-    })
-
-    await prisma.user.delete({
-      where: { id: parseInt(id) }
-    })
+    await prisma.user.delete({ where: { id: parseInt(id) } })
 
     res.status(200).json({ message: 'User deleted successfully.' })
   } catch (error) {
@@ -122,12 +144,8 @@ const getAllRestaurants = async (req, res) => {
     const restaurants = await prisma.restaurant.findMany({
       where,
       include: {
-        owner: {
-          select: { id: true, name: true, email: true, phone: true }
-        },
-        _count: {
-          select: { reservations: true, tables: true }
-        }
+        owner: { select: { id: true, name: true, email: true, phone: true } },
+        _count: { select: { reservations: true, tables: true } }
       },
       orderBy: { createdAt: 'desc' }
     })
@@ -143,25 +161,16 @@ const deleteRestaurant = async (req, res) => {
   try {
     const { id } = req.params
 
-    const restaurant = await prisma.restaurant.findUnique({
-      where: { id: parseInt(id) }
-    })
+    const restaurant = await prisma.restaurant.findUnique({ where: { id: parseInt(id) } })
 
     if (!restaurant) {
       return res.status(404).json({ message: 'Restaurant not found.' })
     }
 
-    await prisma.reservation.deleteMany({
-      where: { restaurantId: parseInt(id) }
-    })
-
-    await prisma.table.deleteMany({
-      where: { restaurantId: parseInt(id) }
-    })
-
-    await prisma.restaurant.delete({
-      where: { id: parseInt(id) }
-    })
+    await prisma.reservation.deleteMany({ where: { restaurantId: parseInt(id) } })
+    await prisma.table.deleteMany({ where: { restaurantId: parseInt(id) } })
+    await prisma.timeSlot.deleteMany({ where: { restaurantId: parseInt(id) } })
+    await prisma.restaurant.delete({ where: { id: parseInt(id) } })
 
     res.status(200).json({ message: 'Restaurant deleted successfully.' })
   } catch (error) {
@@ -170,17 +179,17 @@ const deleteRestaurant = async (req, res) => {
   }
 }
 
-// ─── CREATE RESTAURANT BY ADMIN ──────────────────────────
+// ─── CREATE RESTAURANT BY ADMIN ───────────────────────────
 const createRestaurant = async (req, res) => {
   try {
     const {
-      name, description, location, address,
+      name, description, location,
       openingTime, closingTime,
       ownerName, ownerEmail, ownerPassword, ownerPhone
     } = req.body
 
     if (!name || !location || !openingTime || !closingTime || !ownerEmail || !ownerPassword || !ownerPhone) {
-      return res.status(400).json({ message: 'All required fields must be filled including owner phone.' })
+      return res.status(400).json({ message: 'All required fields must be filled.' })
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -188,15 +197,9 @@ const createRestaurant = async (req, res) => {
       return res.status(400).json({ message: 'Please enter a valid owner email.' })
     }
 
-    const existing = await prisma.user.findUnique({
-      where: { email: ownerEmail.toLowerCase() }
-    })
+    let owner = await prisma.user.findUnique({ where: { email: ownerEmail.toLowerCase() } })
 
-    let owner
-
-    if (existing) {
-      owner = existing
-    } else {
+    if (!owner) {
       const hashedPassword = await bcrypt.hash(ownerPassword, 10)
       owner = await prisma.user.create({
         data: {
@@ -204,7 +207,9 @@ const createRestaurant = async (req, res) => {
           email: ownerEmail.toLowerCase().trim(),
           password: hashedPassword,
           phone: ownerPhone.trim(),
-          role: 'restaurant'
+          role: 'restaurant',
+          isVerified: true,
+          isApproved: true
         }
       })
     }
@@ -214,7 +219,7 @@ const createRestaurant = async (req, res) => {
         name,
         description: description || null,
         location,
-        address: address || null,
+        // FIX: removed address field — not in schema
         openingTime,
         closingTime,
         ownerId: owner.id,
@@ -225,12 +230,7 @@ const createRestaurant = async (req, res) => {
     res.status(201).json({
       message: 'Restaurant created successfully.',
       restaurant,
-      owner: {
-        id: owner.id,
-        name: owner.name,
-        email: owner.email,
-        role: owner.role
-      }
+      owner: { id: owner.id, name: owner.name, email: owner.email, role: owner.role }
     })
   } catch (error) {
     console.error('Create restaurant error:', error)
@@ -238,40 +238,97 @@ const createRestaurant = async (req, res) => {
   }
 }
 
-// ─── ADMIN DASHBOARD STATS ────────────────────────────────
-const getDashboardStats = async (req, res) => {
+// ─── APPROVE RESTAURANT ───────────────────────────────────
+const approveRestaurant = async (req, res) => {
   try {
-    const [totalUsers, totalOwners, totalRestaurants, pendingRestaurants, totalReservations, pendingReservations] = await Promise.all([
-      prisma.user.count({ where: { role: 'user' } }),
-      prisma.user.count({ where: { role: 'restaurant' } }),
-      prisma.restaurant.count({ where: { isApproved: true } }),
-      prisma.restaurant.count({ where: { isApproved: false } }),
-      prisma.reservation.count(),
-      prisma.reservation.count({ where: { status: 'pending' } })
-    ])
+    const { id } = req.params
 
-    res.status(200).json({
-      stats: {
-        totalUsers,
-        totalOwners,
-        totalRestaurants,
-        pendingRestaurants,
-        totalReservations,
-        pendingReservations
-      }
-    })
+    const restaurant = await prisma.restaurant.findUnique({ where: { id: parseInt(id) } })
+    if (!restaurant) {
+      return res.status(404).json({ message: 'Restaurant not found.' })
+    }
+
+    await prisma.restaurant.update({ where: { id: parseInt(id) }, data: { isApproved: true } })
+    await prisma.user.update({ where: { id: restaurant.ownerId }, data: { isApproved: true } })
+
+    res.status(200).json({ message: 'Restaurant approved successfully.' })
   } catch (error) {
-    console.error('Dashboard stats error:', error)
+    console.error('Approve restaurant error:', error)
+    res.status(500).json({ message: 'Server error.' })
+  }
+}
+
+// ─── REJECT RESTAURANT ────────────────────────────────────
+const rejectRestaurant = async (req, res) => {
+  try {
+    const { id } = req.params
+
+    const restaurant = await prisma.restaurant.findUnique({ where: { id: parseInt(id) } })
+    if (!restaurant) {
+      return res.status(404).json({ message: 'Restaurant not found.' })
+    }
+
+    await prisma.restaurant.delete({ where: { id: parseInt(id) } })
+    await prisma.user.delete({ where: { id: restaurant.ownerId } })
+
+    res.status(200).json({ message: 'Restaurant rejected and removed.' })
+  } catch (error) {
+    console.error('Reject restaurant error:', error)
+    res.status(500).json({ message: 'Server error.' })
+  }
+}
+
+// ─── GET PENDING RESTAURANTS ──────────────────────────────
+const getPendingRestaurants = async (req, res) => {
+  try {
+    const restaurants = await prisma.restaurant.findMany({
+      where: { isApproved: false },
+      include: {
+        owner: { select: { id: true, name: true, email: true, phone: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    })
+    res.status(200).json({ pendingRestaurants: restaurants })
+  } catch (error) {
+    console.error('Get pending restaurants error:', error)
+    res.status(500).json({ message: 'Server error.' })
+  }
+}
+
+// ─── GET ALL RESERVATIONS ─────────────────────────────────
+const getAllReservations = async (req, res) => {
+  try {
+    const { status } = req.query
+
+    const where = {}
+    if (status) where.status = status
+
+    const reservations = await prisma.reservation.findMany({
+      where,
+      include: {
+        user: { select: { id: true, name: true, email: true } },
+        restaurant: { select: { id: true, name: true, location: true } },
+        table: { select: { id: true, tableNumber: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    })
+    res.status(200).json({ reservations })
+  } catch (error) {
+    console.error('Get all reservations error:', error)
     res.status(500).json({ message: 'Server error.' })
   }
 }
 
 module.exports = {
+  getDashboardStats,
   getAllUsers,
   getAllRestaurantOwners,
   deleteUser,
   getAllRestaurants,
   deleteRestaurant,
   createRestaurant,
-  getDashboardStats
+  approveRestaurant,
+  rejectRestaurant,
+  getPendingRestaurants,
+  getAllReservations
 }
